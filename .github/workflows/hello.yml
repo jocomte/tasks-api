@@ -1,0 +1,14 @@
+name: Hello
+
+on:
+  push:
+
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Afficher les informations
+        run: |
+          echo "Bienvenue dans GitHub Actions !"
+          echo "Branche : ${{ github.ref_name }}"
+          echo "Auteur : ${{ github.actor }}"
