@@ -34,9 +34,6 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
-    outputs:
-      image-sha: ${{ steps.prep.outputs.image-sha }}
-      image-version: ${{ steps.prep.outputs.image-version }}
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v6
@@ -56,16 +53,13 @@ jobs:
         run: |
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"
           IMAGE_BASE="ghcr.io/${OWNER}/tasks-api"
-          SHORT_SHA="${GITHUB_SHA::7}"
           echo "image=${IMAGE_BASE}" >> "$GITHUB_OUTPUT"
-          echo "image-sha=${IMAGE_BASE}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
             VERSION="dev"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "image-version=${IMAGE_BASE}:${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Métadonnées Docker
         id: meta
@@ -100,7 +94,9 @@ jobs:
 
       - name: Déployer et tester sur staging (test de fumée)
         run: |
-          IMAGE="${{ needs.build.outputs.image-sha }}"
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          IMAGE="ghcr.io/${OWNER}/tasks-api:sha-${SHORT_SHA}"
           docker pull "$IMAGE"
           docker run -d -p 8000:8000 --name api-staging "$IMAGE"
           echo "Attente du démarrage de l'API sur staging..."
@@ -115,7 +111,7 @@ jobs:
           exit 1
 
   deploy-production:
-    needs: deploy-staging
+    needs: [build, deploy-staging]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: production
@@ -129,7 +125,9 @@ jobs:
 
       - name: Déployer et tester sur production (test de fumée)
         run: |
-          IMAGE="${{ needs.build.outputs.image-version }}"
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          IMAGE="ghcr.io/${OWNER}/tasks-api:${VERSION}"
           docker pull "$IMAGE"
           docker run -d -p 8000:8000 --name api-production "$IMAGE"
           echo "Attente du démarrage de l'API sur production..."
