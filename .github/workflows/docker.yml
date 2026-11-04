@@ -34,6 +34,9 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
+    outputs:
+      image-sha: ${{ steps.prep.outputs.image-sha }}
+      image-version: ${{ steps.prep.outputs.image-version }}
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v6
@@ -52,13 +55,17 @@ jobs:
         id: prep
         run: |
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"
-          echo "image=ghcr.io/${OWNER}/tasks-api" >> "$GITHUB_OUTPUT"
+          IMAGE_BASE="ghcr.io/${OWNER}/tasks-api"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "image=${IMAGE_BASE}" >> "$GITHUB_OUTPUT"
+          echo "image-sha=${IMAGE_BASE}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
             VERSION="dev"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "image-version=${IMAGE_BASE}:${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Métadonnées Docker
         id: meta
@@ -78,3 +85,60 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             APP_VERSION=${{ steps.prep.outputs.version }}
+
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Connexion au registre GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Déployer et tester sur staging (test de fumée)
+        run: |
+          IMAGE="${{ needs.build.outputs.image-sha }}"
+          docker pull "$IMAGE"
+          docker run -d -p 8000:8000 --name api-staging "$IMAGE"
+          echo "Attente du démarrage de l'API sur staging..."
+          for i in {1..10}; do
+            if curl -f http://localhost:8000/health && curl -f http://localhost:8000/version; then
+              echo "Smoke test réussi sur staging !"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Échec du smoke test sur staging"
+          exit 1
+
+  deploy-production:
+    needs: deploy-staging
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Connexion au registre GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Déployer et tester sur production (test de fumée)
+        run: |
+          IMAGE="${{ needs.build.outputs.image-version }}"
+          docker pull "$IMAGE"
+          docker run -d -p 8000:8000 --name api-production "$IMAGE"
+          echo "Attente du démarrage de l'API sur production..."
+          for i in {1..10}; do
+            if curl -f http://localhost:8000/health && curl -f http://localhost:8000/version; then
+              echo "Smoke test réussi sur production !"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Échec du smoke test sur production"
+          exit 1
